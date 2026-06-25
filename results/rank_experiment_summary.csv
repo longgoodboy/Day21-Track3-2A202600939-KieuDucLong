@@ -1,1 +1,5 @@
-rank,lora_alpha,target_modules,trainable_params,trainable_percent,training_time_min,peak_vram_gb,eval_loss,perplexity
+rank,lora_alpha,target_modules,trainable_params,trainable_percent,training_time_min,peak_vram_gb,eval_loss,perplexity,log_path,adapter_path
+8,16,"q_proj,v_proj",1843200,0.1083906398660773,5.951007962226868,10.271286010742188,1.516049861907959,4.554199898876411,results/train_log_r8.csv,adapters/r8
+16,32,"q_proj,v_proj",3686400,0.2165465635263405,6.002464354038239,10.293087005615234,1.469140648841858,4.345499226268498,results/train_log_r16.csv,adapters/r16
+64,128,"q_proj,v_proj",14745600,0.8605954842642506,5.9801972309748335,10.426467895507812,1.4629055261611938,4.31848879965221,results/train_log_r64.csv,adapters/r64
+base,-,-,0,0.0,-,-,1.9957986247950588,7.358077024774751,,

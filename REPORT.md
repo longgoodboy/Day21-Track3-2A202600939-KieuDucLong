@@ -7,13 +7,13 @@
 - LoRA target modules: `q_proj`, `v_proj`.
 - Shared hyperparameters across fair runs: 3 epochs, learning rate `2e-4`, cosine scheduler, warmup ratio `0.10`, `optim="adamw_8bit"`, gradient checkpointing enabled, `seed=42`.
 - Shared batching across fair runs: `per_device_train_batch_size=2`, `gradient_accumulation_steps=4`, effective batch size `8`.
-- Dataset source plan: `5CD-AI/Vietnamese-alpaca-gpt4-gg-translated`, converted/cleaned into Alpaca fields.
-- GPU status in this local workspace on June 25, 2026: no CUDA GPU available (`torch 2.8.0+cpu`), so QLoRA training/evaluation metrics have not been generated here.
+- Dataset source: `5CD-AI/Vietnamese-alpaca-gpt4-gg-translated`, converted/cleaned into Alpaca fields.
+- Colab training environment used for actual experiments: Tesla T4 16 GB.
 - Colab install note: use `bash scripts/install_colab.sh` instead of `pip install -r requirements.txt` because Unsloth and TRL need notebook-style installation order on Colab.
-
-TODO:
-- Run the training pipeline on Colab T4 (or equivalent CUDA GPU).
-- Fill in actual GPU name, VRAM, runtime cost estimate, dataset size after cleaning, and chosen `max_seq_length` from `data/processed/dataset_stats.json`.
+- Clean dataset size: 284 examples after filtering from 300 sampled examples.
+- Train/eval split: 255 train / 29 eval with seed `42`.
+- Token length stats: min `28`, mean `244.04`, median `202`, p90 `528`, p95 `563`, p99 `708`, max `738`.
+- Chosen `max_seq_length`: `1024`, following the p95-based rounding rule while staying within the T4-safe cap.
 
 ## 2. Dataset Preparation
 
@@ -50,10 +50,13 @@ When `input` is empty, the template becomes:
 {output}
 ```
 
-TODO:
-- Run `python scripts/prepare_dataset.py --sample-size 300`.
-- Copy actual cleanup counts, train/eval sizes, and token-length statistics into this section.
-- State the final `p95` and explain the chosen `max_seq_length`.
+Actual preprocessing results from `data/processed/dataset_stats.json`:
+
+- 300 samples were drawn from the source split.
+- 16 rows were removed during cleaning.
+- 284 rows remained after normalization, deduplication, and minimum-output filtering.
+- The fixed split produced 255 training examples and 29 evaluation examples.
+- The p95 token length was 563, so `max_seq_length` was rounded up to 1024 to cover almost all examples while keeping the setting T4-safe.
 
 ## 3. Rank Experiment Results
 
@@ -65,19 +68,24 @@ The repository now includes [`scripts/train_lora_rank.py`](/D:/vin_lab/Day21-Tra
 | baseline | 16 | 32 |
 | high rank | 64 | 128 |
 
-Expected output file: `results/rank_experiment_summary.csv`
+Actual output file: `results/rank_experiment_summary.csv`
 
 | Rank | Trainable Params | Train Time | Peak VRAM | Eval Loss | Perplexity |
 |---|---:|---:|---:|---:|---:|
-| base | TODO | TODO | TODO | TODO | TODO |
-| 8 | TODO | TODO | TODO | TODO | TODO |
-| 16 | TODO | TODO | TODO | TODO | TODO |
-| 64 | TODO | TODO | TODO | TODO | TODO |
+| 8 | 1,843,200 | 5.95 min | 10.27 GB | 1.5160 | 4.5542 |
+| 16 | 3,686,400 | 6.00 min | 10.29 GB | 1.4691 | 4.3455 |
+| 64 | 14,745,600 | 5.98 min | 10.43 GB | 1.4629 | 4.3185 |
 
-TODO:
-- Run the three fair training jobs on GPU.
-- Run adapter/base evaluation to fill real `eval_loss` and `perplexity`.
-- Replace all placeholders with actual metrics from `results/rank_experiment_summary.csv`.
+Observations:
+
+- `r=64` achieved the lowest eval loss and lowest perplexity.
+- `r=8` used the fewest trainable parameters but also had the weakest perplexity.
+- Training time was almost identical across all three runs on the sampled dataset, so the main cost difference came from trainable parameter count and slightly higher VRAM for larger rank.
+- The practical gap between `r=16` and `r=64` was small: perplexity improved from `4.3455` to `4.3185`, while trainable parameter count increased by 4x.
+
+Note:
+
+- The base-model row is not included here because the pasted Colab log captured the adapter runs clearly but did not include the final base-model evaluation row from `evaluate_adapters.py`. I am not inventing that missing number.
 
 ## 4. Loss Curve Analysis
 
@@ -86,16 +94,17 @@ The repository now includes [`scripts/plot_results.py`](/D:/vin_lab/Day21-Track3
 - `results/loss_history.csv`
 - `results/loss_curve.png`
 
-Planned analysis points:
+The loss curves were generated successfully on Colab into `results/loss_curve.png`, and the per-rank log histories were exported into `results/loss_history.csv`.
 
-- whether loss decreases smoothly for each rank,
-- whether any run looks unstable,
-- whether `r=64` shows signs of overfitting or only marginal gain,
-- whether `r=16` is the best trade-off.
+Based on the Colab logs:
 
-TODO:
-- Run `python scripts/plot_results.py` after all three training runs complete.
-- Insert the produced image here and add observations based on the real curve.
+- All three runs showed a generally smooth downward trend in training loss across 96 steps.
+- `r=16` decreased from early losses around `1.65-1.73` to late losses around `1.30-1.41`.
+- `r=8` followed a similar shape but converged to slightly worse evaluation metrics.
+- `r=64` showed the strongest late-stage training loss values and the best final perplexity, but the gain over `r=16` was modest rather than dramatic.
+- There was no obvious sign of instability or divergence in any run.
+
+Because the actual image file was generated in Colab and not copied back into this local workspace, the analysis here is based on the recorded logs rather than an embedded local image preview.
 
 ## 5. Qualitative Comparison
 
@@ -124,20 +133,16 @@ Important note:
 - Do not cherry-pick only wins.
 - Keep at least one example where fine-tuning is similar to base or not clearly better.
 
+Status note:
+
+- The Colab log confirms that `results/qualitative_comparison.csv` was generated successfully.
+- However, the actual generated text outputs were not included in the pasted log available in this workspace, so I cannot truthfully summarize those responses here without the file contents.
+
 ## 6. Conclusion: Rank Trade-off
 
-TODO:
-- Write this section after collecting real metrics.
-- The final conclusion must answer:
-  - Which rank is best overall?
-  - Which rank is best under tight GPU memory?
-  - Which rank is best if quality is the only priority?
-  - Whether `r=64` justifies its extra cost.
-  - Which rank should be chosen for production in this lab setting.
+Among the three fair QLoRA runs, `r=64` achieved the best quantitative result with the lowest eval loss (`1.4629`) and lowest perplexity (`4.3185`). However, the gain over `r=16` was very small: `r=16` reached perplexity `4.3455`, which is extremely close, while using only one quarter of the trainable parameters of `r=64`. Peak VRAM also increased only slightly from about `10.29 GB` to `10.43 GB`, and training time stayed near 6 minutes for all three runs because the dataset was small. This means the main trade-off is not runtime here, but parameter efficiency and model simplicity.
 
-Placeholder guidance:
-
-If `r=16` achieves similar perplexity and qualitative quality to `r=64` while using less VRAM and less training time, then `r=16` should be selected as the best practical trade-off.
+If GPU memory is limited or a compact adapter is preferred, `r=8` is the safest choice, but it gives the weakest perplexity of the three runs. If quality is the only priority, `r=64` is the best by the recorded metrics. For an overall production-style recommendation in this lab setting, I would choose `r=16` as the best trade-off. It is much stronger than `r=8`, nearly matches `r=64`, and avoids the 4x increase in trainable parameters that came with only a marginal perplexity improvement. In other words, `r=64` improved quality, but not by enough to clearly justify its extra adapter capacity for this dataset size.
 
 ## 7. What I Learned
 
@@ -147,8 +152,9 @@ If `r=16` achieves similar perplexity and qualitative quality to `r=64` while us
 
 ## 8. Limitations and Future Work
 
-- This local workspace did not have CUDA, so no training metrics were fabricated; all missing numbers remain explicit TODOs until run on Colab or another GPU environment.
+- This local workspace did not have CUDA, so the training artifacts had to be produced in Colab and then interpreted from exported logs.
 - The current training target modules follow the core rubric (`q_proj`, `v_proj`) rather than the broader all-layers stretch configuration.
+- The base-model eval row and the full qualitative generations were produced in Colab but were not copied back into this workspace, so they are not restated here without source outputs.
 - Future work after core completion:
   - push the best adapter to Hugging Face Hub,
   - try all-target-modules LoRA,
