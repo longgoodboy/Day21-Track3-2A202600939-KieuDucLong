@@ -1,19 +1,21 @@
+import os
+
+os.environ.setdefault("UNSLOTH_RETURN_LOGITS", "1")
+
 import argparse
 import gc
 import inspect
 import json
 import math
-import os
 import time
 from pathlib import Path
 
+from unsloth import FastLanguageModel
 import pandas as pd
 import torch
 from datasets import load_dataset
 from transformers import Trainer, TrainingArguments
 from trl import SFTTrainer
-
-from unsloth import FastLanguageModel
 
 
 MODEL_NAME = "unsloth/Qwen2.5-3B-bnb-4bit"
