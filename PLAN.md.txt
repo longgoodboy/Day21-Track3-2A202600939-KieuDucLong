@@ -1,0 +1,716 @@
+# PLAN.md — Lab 21: LoRA / QLoRA Fine-tuning LLMs
+
+## 0. Goal
+
+Hoàn thành Lab 21 với mục tiêu đạt điểm tối đa bằng cách fine-tune LLM bằng LoRA/QLoRA, chạy thí nghiệm so sánh nhiều LoRA rank, đánh giá định lượng + định tính, lưu kết quả đầy đủ và viết báo cáo rõ ràng.
+
+Repo hiện tại:
+
+```bash
+https://github.com/longgoodboy/Day21-Track3-2A202600939-KieuDucLong
+```
+
+Lab cần ưu tiên:
+
+* Train LoRA/QLoRA end-to-end.
+* So sánh LoRA rank `r=8`, `r=16`, `r=64`.
+* Ghi lại `trainable_params`, `training_time`, `peak_vram`, `eval_loss`, `perplexity`.
+* Sinh qualitative comparison giữa base model và fine-tuned model.
+* Xuất đầy đủ file kết quả.
+* Viết `REPORT.md` theo đúng rubric.
+* Nếu có thể, push best adapter lên HuggingFace Hub để lấy bonus.
+
+---
+
+## 1. Expected Final Repository Structure
+
+Sau khi hoàn thành, repo nên có cấu trúc như sau:
+
+```text
+Day21-Track3-2A202600939-KieuDucLong/
+├── README.md
+├── PLAN.md
+├── REPORT.md
+├── LINKS.md
+├── requirements.txt
+├── notebooks/
+│   └── Lab21_LoRA_Finetuning_T4.ipynb
+├── scripts/
+│   ├── prepare_dataset.py
+│   ├── train_lora_rank.py
+│   ├── evaluate_adapters.py
+│   └── plot_results.py
+├── results/
+│   ├── rank_experiment_summary.csv
+│   ├── qualitative_comparison.csv
+│   ├── loss_history.csv
+│   └── loss_curve.png
+└── adapters/
+    └── best/
+        ├── adapter_config.json
+        ├── adapter_model.safetensors
+        └── tokenizer files if needed
+```
+
+Nếu adapter quá nặng thì không cần commit toàn bộ `adapters/`; thay vào đó push lên HuggingFace và ghi link trong `LINKS.md`.
+
+---
+
+## 2. Technical Stack
+
+Use the existing notebook and implement reusable scripts if possible.
+
+Main libraries:
+
+```text
+unsloth
+transformers
+datasets
+trl
+peft
+bitsandbytes
+accelerate
+torch
+pandas
+numpy
+matplotlib
+huggingface_hub
+```
+
+Target environment:
+
+```text
+Google Colab T4 GPU 16GB
+Python 3.10+
+CUDA available
+```
+
+Recommended base model:
+
+```text
+Qwen/Qwen2.5-3B-Instruct
+```
+
+Alternative if memory issue:
+
+```text
+unsloth/Qwen2.5-1.5B-Instruct-bnb-4bit
+```
+
+Use 4-bit QLoRA to fit on T4.
+
+---
+
+## 3. Dataset Plan
+
+### 3.1 Dataset Requirements
+
+Dataset must use Alpaca-style fields:
+
+```json
+{
+  "instruction": "...",
+  "input": "...",
+  "output": "..."
+}
+```
+
+Use 100–500 examples.
+
+Recommended size:
+
+```text
+200–300 samples
+```
+
+Dataset options:
+
+1. Use Vietnamese Alpaca-style dataset if available.
+2. Or create a small custom Vietnamese instruction-following dataset for a focused domain.
+
+Recommended custom domain:
+
+```text
+Vietnamese AI / coding tutor assistant
+```
+
+This is good for qualitative evaluation because prompts are easy to inspect.
+
+### 3.2 Dataset Cleaning
+
+Implement or verify these checks:
+
+* Remove examples with empty `instruction` or `output`.
+* Normalize missing `input` to empty string.
+* Remove duplicate examples.
+* Remove very short outputs.
+* Keep only examples with reasonable length.
+* Split dataset into train/eval using fixed seed `42`.
+* Use 90% train and 10% eval.
+
+### 3.3 Prompt Formatting
+
+Use Alpaca-style prompt:
+
+```text
+### Instruction:
+{instruction}
+
+### Input:
+{input}
+
+### Response:
+{output}
+```
+
+If `input` is empty, still keep a consistent template:
+
+```text
+### Instruction:
+{instruction}
+
+### Response:
+{output}
+```
+
+Create a `text` column for SFT training.
+
+### 3.4 Token Length Analysis
+
+Before training:
+
+* Tokenize all formatted examples.
+* Compute min, mean, median, p90, p95, max token length.
+* Set `max_seq_length` based on p95.
+* Round to a safe value such as `512` or `1024`.
+
+Save this analysis into `REPORT.md`.
+
+Example expected statement:
+
+```text
+The p95 token length was around X tokens, so max_seq_length was set to Y to cover most samples while avoiding unnecessary VRAM usage.
+```
+
+---
+
+## 4. Training Plan
+
+### 4.1 Common Training Configuration
+
+All rank experiments must use the same dataset, split, model, epochs, LR, batch size, and sequence length.
+
+Use:
+
+```python
+num_train_epochs = 3
+learning_rate = 2e-4
+lr_scheduler_type = "cosine"
+warmup_ratio = 0.10
+optim = "adamw_8bit"
+gradient_checkpointing = True
+load_in_4bit = True
+```
+
+Batching:
+
+```python
+per_device_train_batch_size = 2
+gradient_accumulation_steps = 4
+effective_batch_size = 8
+```
+
+LoRA target modules baseline:
+
+```python
+target_modules = ["q_proj", "v_proj"]
+```
+
+LoRA dropout:
+
+```python
+lora_dropout = 0
+```
+
+Random seed:
+
+```python
+seed = 42
+```
+
+### 4.2 Rank Experiments
+
+Train three adapters:
+
+| Experiment | LoRA rank | LoRA alpha |
+| ---------- | --------: | ---------: |
+| low rank   |         8 |         16 |
+| baseline   |        16 |         32 |
+| high rank  |        64 |        128 |
+
+For each run:
+
+1. Load base model in 4-bit.
+2. Attach LoRA adapter.
+3. Count trainable parameters.
+4. Reset CUDA peak memory stats.
+5. Train.
+6. Measure total training time.
+7. Measure peak VRAM.
+8. Evaluate on eval split.
+9. Compute perplexity.
+10. Save adapter.
+11. Save metrics.
+
+Pseudo-code:
+
+```python
+import time
+import math
+import torch
+
+torch.cuda.reset_peak_memory_stats()
+start_time = time.time()
+
+trainer.train()
+
+training_time_min = (time.time() - start_time) / 60
+peak_vram_gb = torch.cuda.max_memory_allocated() / 1024**3
+
+eval_metrics = trainer.evaluate()
+eval_loss = eval_metrics["eval_loss"]
+perplexity = math.exp(eval_loss)
+```
+
+Clear GPU between experiments:
+
+```python
+import gc
+del model
+del trainer
+gc.collect()
+torch.cuda.empty_cache()
+```
+
+---
+
+## 5. Evaluation Plan
+
+### 5.1 Quantitative Evaluation
+
+Create `results/rank_experiment_summary.csv` with this schema:
+
+```csv
+rank,lora_alpha,target_modules,trainable_params,trainable_percent,training_time_min,peak_vram_gb,eval_loss,perplexity
+8,16,"q_proj,v_proj",...
+16,32,"q_proj,v_proj",...
+64,128,"q_proj,v_proj",...
+```
+
+Also evaluate base model if feasible:
+
+```csv
+base,-,-,0,0,-,-,eval_loss,perplexity
+```
+
+If base model eval is too slow or memory-heavy, still attempt it with the same eval set and mention any limitation clearly in `REPORT.md`.
+
+### 5.2 Loss Curve
+
+Save training logs to:
+
+```text
+results/loss_history.csv
+```
+
+Generate:
+
+```text
+results/loss_curve.png
+```
+
+The plot should include training loss over steps. If possible, plot all ranks on one graph.
+
+### 5.3 Qualitative Comparison
+
+Create at least 5 evaluation prompts.
+
+Recommended: use 10 prompts for stronger report.
+
+For each prompt, generate:
+
+* Base model output.
+* Best fine-tuned adapter output.
+* Optional outputs from `r=8`, `r=16`, `r=64`.
+* Short judgment.
+
+Save to:
+
+```text
+results/qualitative_comparison.csv
+```
+
+CSV schema:
+
+```csv
+prompt,base_output,r8_output,r16_output,r64_output,best_rank,comment
+```
+
+Prompts should test:
+
+1. Short factual answer.
+2. Step-by-step explanation.
+3. Vietnamese instruction following.
+4. Domain-specific coding / AI explanation.
+5. Format control.
+6. Refusal or uncertainty handling if applicable.
+7. Long-form answer.
+8. Simple reasoning.
+9. Summarization.
+10. Friendly tutoring style.
+
+Do not cherry-pick only good results. Include at least one case where fine-tuning does not significantly improve output.
+
+---
+
+## 6. Report Plan
+
+Create `REPORT.md` with these sections:
+
+```markdown
+# Lab 21 — LoRA / QLoRA Fine-tuning Report
+
+## 1. Setup
+
+## 2. Dataset Preparation
+
+## 3. Rank Experiment Results
+
+## 4. Loss Curve Analysis
+
+## 5. Qualitative Comparison
+
+## 6. Conclusion: Rank Trade-off
+
+## 7. What I Learned
+
+## 8. Limitations and Future Work
+```
+
+### 6.1 Setup Section
+
+Include:
+
+* GPU.
+* Base model.
+* Quantization.
+* LoRA config.
+* Training hyperparameters.
+* Dataset size.
+* Train/eval split.
+* Max sequence length and why it was chosen.
+
+### 6.2 Rank Experiment Results
+
+Include a markdown table based on `rank_experiment_summary.csv`.
+
+Discuss:
+
+* Which rank had lowest perplexity.
+* Which rank trained fastest.
+* Which rank used most VRAM.
+* Whether higher rank gave meaningful improvement.
+* Best practical rank for deployment.
+
+### 6.3 Loss Curve Analysis
+
+Discuss:
+
+* Whether training loss decreased smoothly.
+* Whether any run looked unstable.
+* Whether high rank overfit or not.
+* Whether rank 16 is a good trade-off.
+
+### 6.4 Qualitative Comparison
+
+Include 5 representative examples.
+
+For each example:
+
+* Prompt.
+* Base output summary.
+* Fine-tuned output summary.
+* Short comment.
+
+### 6.5 Conclusion: Rank Trade-off
+
+Minimum 100 words.
+
+Must answer:
+
+* Which rank is best overall?
+* Which rank is best if GPU memory is limited?
+* Which rank is best if quality is the only priority?
+* Did rank 64 justify its extra cost?
+* What would you choose for production?
+
+Recommended conclusion:
+
+```text
+If r=16 achieves similar perplexity to r=64 while using less VRAM and training time, choose r=16 as the best trade-off.
+```
+
+### 6.6 What I Learned
+
+Mention:
+
+* LoRA rank controls adapter capacity.
+* QLoRA allows fine-tuning larger models on limited GPU.
+* Perplexity is useful but not enough.
+* Qualitative checks are necessary.
+* Higher rank is not always better.
+
+---
+
+## 7. Bonus Plan
+
+### 7.1 HuggingFace Hub Bonus
+
+Push best adapter to HuggingFace Hub.
+
+Best adapter is usually one of:
+
+```text
+r=16 if it has best trade-off
+r=64 if it clearly has best perplexity and output quality
+```
+
+Create `LINKS.md`:
+
+```markdown
+# Links
+
+- GitHub repository: https://github.com/longgoodboy/Day21-Track3-2A202600939-KieuDucLong
+- HuggingFace adapter: <paste link here>
+- Colab notebook: <paste link here if available>
+```
+
+### 7.2 Optional Stretch Goal
+
+Only do this if core lab is already complete.
+
+Pick one:
+
+1. Track experiment with W&B.
+2. Train with all target modules:
+
+```python
+target_modules = [
+    "q_proj", "k_proj", "v_proj", "o_proj",
+    "gate_proj", "up_proj", "down_proj"
+]
+```
+
+3. Try DoRA if supported.
+4. Export GGUF if time permits.
+
+Recommended stretch goal:
+
+```text
+W&B logging or all-target-modules LoRA comparison.
+```
+
+Avoid doing too many stretch goals if it risks breaking the core submission.
+
+---
+
+## 8. Implementation Tasks for Codex
+
+### Task 1 — Inspect repo
+
+* Read existing notebook and rubric.
+* Identify missing files.
+* Do not remove existing useful notebook content.
+* Add scripts only if they help reproducibility.
+
+### Task 2 — Add `requirements.txt`
+
+Create or update `requirements.txt` with needed dependencies.
+
+### Task 3 — Add dataset preparation script
+
+Create:
+
+```text
+scripts/prepare_dataset.py
+```
+
+Responsibilities:
+
+* Load or create dataset.
+* Convert to Alpaca format.
+* Clean examples.
+* Create formatted `text`.
+* Split train/eval.
+* Compute token length stats.
+* Save processed dataset if useful.
+
+### Task 4 — Add training script
+
+Create:
+
+```text
+scripts/train_lora_rank.py
+```
+
+Responsibilities:
+
+* Accept rank as CLI argument.
+* Set alpha automatically as `2 * rank`.
+* Train LoRA adapter.
+* Save adapter to `adapters/r{rank}`.
+* Save metrics JSON or CSV row.
+* Track training time and VRAM.
+* Save training logs.
+
+Example CLI:
+
+```bash
+python scripts/train_lora_rank.py --rank 16
+python scripts/train_lora_rank.py --rank 8
+python scripts/train_lora_rank.py --rank 64
+```
+
+### Task 5 — Add evaluation script
+
+Create:
+
+```text
+scripts/evaluate_adapters.py
+```
+
+Responsibilities:
+
+* Evaluate base model if possible.
+* Evaluate adapters r8, r16, r64.
+* Compute eval loss and perplexity.
+* Generate qualitative outputs.
+* Save:
+
+  * `results/rank_experiment_summary.csv`
+  * `results/qualitative_comparison.csv`
+
+### Task 6 — Add plotting script
+
+Create:
+
+```text
+scripts/plot_results.py
+```
+
+Responsibilities:
+
+* Read training logs.
+* Generate `results/loss_curve.png`.
+* Optionally compare loss curves for all ranks.
+
+### Task 7 — Update notebook
+
+Notebook should show an end-to-end workflow:
+
+1. Install dependencies.
+2. Load dataset.
+3. Analyze token length.
+4. Train r=16 baseline.
+5. Train r=8 and r=64.
+6. Evaluate.
+7. Generate CSVs.
+8. Generate loss curve.
+9. Save or push adapter.
+
+Keep notebook outputs clean but enough to prove execution.
+
+### Task 8 — Write `REPORT.md`
+
+Use actual generated metrics. Do not invent numbers.
+
+Include:
+
+* Setup table.
+* Dataset stats.
+* Rank comparison table.
+* Loss curve image.
+* Qualitative examples.
+* Final conclusion.
+* What I learned.
+
+### Task 9 — Write `LINKS.md`
+
+If HuggingFace push is done, add link.
+
+If not done, mention:
+
+```text
+HuggingFace adapter was not pushed due to authentication/runtime limitation.
+```
+
+### Task 10 — Final validation
+
+Before finishing, verify:
+
+```bash
+ls results/
+```
+
+Must include:
+
+```text
+rank_experiment_summary.csv
+qualitative_comparison.csv
+loss_curve.png
+```
+
+Check report references these files.
+
+Check notebook can be opened.
+
+Check no huge unnecessary files are committed.
+
+---
+
+## 9. Definition of Done
+
+The lab is considered complete when:
+
+* Notebook runs end-to-end on Colab T4 or equivalent.
+* Dataset is prepared in Alpaca format.
+* Token length analysis is included.
+* LoRA/QLoRA training works.
+* Rank experiments for `r=8`, `r=16`, `r=64` are completed.
+* Adapter for best rank is saved or pushed to HuggingFace.
+* `rank_experiment_summary.csv` exists and has all required columns.
+* `qualitative_comparison.csv` exists and has at least 5 prompts.
+* `loss_curve.png` exists.
+* `REPORT.md` has all required sections and uses real metrics.
+* `LINKS.md` exists.
+* README or report explains how to reproduce.
+
+---
+
+## 10. Important Notes
+
+Do not invent metrics. If training cannot finish due to GPU limit, document the limitation clearly and still save partial results.
+
+Keep experiments fair:
+
+* Same dataset.
+* Same train/eval split.
+* Same base model.
+* Same epochs.
+* Same learning rate.
+* Same max sequence length.
+* Same target modules.
+
+Only LoRA rank and alpha should change between the three main experiments.
+
+Prioritize correctness and reproducibility over unnecessary complexity.

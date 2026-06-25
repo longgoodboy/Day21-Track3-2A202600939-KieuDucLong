@@ -1,0 +1,28 @@
+{
+  "dataset": "5CD-AI/Vietnamese-alpaca-gpt4-gg-translated",
+  "split": "train",
+  "sample_size_requested": 300,
+  "seed": 42,
+  "train_size": 255,
+  "eval_size": 29,
+  "cleanup": {
+    "original_rows": 300,
+    "clean_rows": 284,
+    "removed_rows": 16
+  },
+  "token_length": {
+    "tokenizer": "Qwen/Qwen2.5-3B-Instruct",
+    "min": 28,
+    "mean": 244.0387323943662,
+    "median": 202,
+    "p90": 528,
+    "p95": 563,
+    "p99": 708,
+    "max": 738,
+    "recommended_max_seq_length": 1024
+  },
+  "prompt_template": {
+    "with_input": "### Instruction:\\n{instruction}\\n\\n### Input:\\n{input}\\n\\n### Response:\\n{output}",
+    "without_input": "### Instruction:\\n{instruction}\\n\\n### Response:\\n{output}"
+  }
+}
