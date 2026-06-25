@@ -9,6 +9,7 @@
 - Shared batching across fair runs: `per_device_train_batch_size=2`, `gradient_accumulation_steps=4`, effective batch size `8`.
 - Dataset source plan: `5CD-AI/Vietnamese-alpaca-gpt4-gg-translated`, converted/cleaned into Alpaca fields.
 - GPU status in this local workspace on June 25, 2026: no CUDA GPU available (`torch 2.8.0+cpu`), so QLoRA training/evaluation metrics have not been generated here.
+- Colab install note: use `bash scripts/install_colab.sh` instead of `pip install -r requirements.txt` because Unsloth and TRL need notebook-style installation order on Colab.
 
 TODO:
 - Run the training pipeline on Colab T4 (or equivalent CUDA GPU).

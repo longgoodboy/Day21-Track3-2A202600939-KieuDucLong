@@ -43,6 +43,16 @@ Day21_Fine-tuning/
 4. Hoàn thành lab + viết REPORT.md theo template
 5. Nộp zip qua LMS
 
+### Colab install note for this repo
+
+If you run the repo scripts directly on Colab, install dependencies with:
+
+```bash
+bash scripts/install_colab.sh
+```
+
+This is intentionally different from `pip install -r requirements.txt`, because the Unsloth + TRL combination used by the lab relies on install order and `--no-deps` for `trl`, matching the notebook setup.
+
 ---
 
 ## 📚 Nội dung chính của bài học
